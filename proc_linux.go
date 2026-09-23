@@ -19,7 +19,7 @@ type gameReader struct {
 	address uint64
 }
 
-func findGame(requestedPID int, processName string) (int, error) {
+func findGame(requestedPID int, processName, module string) (int, error) {
 	if requestedPID > 0 {
 		if _, err := os.Stat(fmt.Sprintf("/proc/%d", requestedPID)); err != nil {
 			return 0, err
@@ -30,6 +30,7 @@ func findGame(requestedPID int, processName string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	matchedProcess := 0
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid == os.Getpid() {
@@ -39,11 +40,28 @@ func findGame(requestedPID int, processName string) (int, error) {
 		cmdline, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
 		comm, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "comm"))
 		base := filepath.Base(strings.TrimSuffix(exe, " (deleted)"))
-		if strings.EqualFold(base, processName) || strings.EqualFold(strings.TrimSpace(string(comm)), processName) || strings.Contains(strings.ToLower(string(cmdline)), strings.ToLower(processName)) {
-			return pid, nil
+		if nameMatches(base, processName) || nameMatches(strings.TrimSpace(string(comm)), processName) || strings.Contains(strings.ToLower(string(cmdline)), strings.ToLower(processName)) {
+			if matchedProcess == 0 {
+				matchedProcess = pid
+			}
+			maps, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "maps"))
+			if err == nil {
+				if _, err := moduleBase(string(maps), module); err == nil {
+					return pid, nil
+				}
+			}
 		}
 	}
+	if matchedProcess != 0 {
+		return 0, fmt.Errorf("game process found (PID %d), but module %q is not mapped; check the module name", matchedProcess, module)
+	}
 	return 0, errNoProcess
+}
+
+func nameMatches(actual, wanted string) bool {
+	actual = strings.TrimSuffix(strings.ToLower(filepath.Base(actual)), ".exe")
+	wanted = strings.TrimSuffix(strings.ToLower(filepath.Base(wanted)), ".exe")
+	return actual != "" && wanted != "" && (strings.HasPrefix(actual, wanted) || strings.HasPrefix(wanted, actual))
 }
 
 func attach(pid int, module string, pointerOffset uint64) (*gameReader, error) {
@@ -76,8 +94,8 @@ func moduleBase(maps, module string) (uint64, error) {
 		if len(fields) < 6 {
 			continue
 		}
-		name := strings.TrimSuffix(fields[5], " (deleted)")
-		if !strings.EqualFold(filepath.Base(name), module) {
+		name := strings.TrimSuffix(strings.Join(fields[5:], " "), " (deleted)")
+		if !nameMatches(filepath.Base(name), module) {
 			continue
 		}
 		bounds := strings.Split(fields[0], "-")
