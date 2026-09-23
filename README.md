@@ -38,6 +38,15 @@ Linux may deny `/proc/<pid>/mem` access because of ptrace restrictions (includin
 
 ## Compatibility
 
-The pointer chain and `0x023DD6F8` offset come from the bundled original Windows project. They have not yet been verified against the current Linux/Proton game build. A module mapping or pointer-chain error is reported while the tool waits/retries. Speed units follow the original raw game value, assumed to be metres per second. The overlay tracks the game window through its X11 `_NET_WM_PID` property; window managers or Wine builds that omit this property may leave it at its default position.
+The `0x023DD6F8` offset and pointer chain have not yet been independently verified against the current Linux/Proton game build. A module mapping or pointer-chain error is reported while the tool waits/retries. Speed units follow the game's raw value, assumed to be metres per second. The overlay tracks the game window through its X11 `_NET_WM_PID` property; window managers or Wine builds that omit this property may cause it to follow the active window instead.
 
-The original Windows source and bundled assets are kept in `original/` as reference material.
+## Development
+
+```sh
+gofmt -w *.go
+go vet ./...
+go test ./...
+go build -o mec-speedometer .
+```
+
+The overlay build uses CGO with GTK 3 and X11 development libraries. A CGO-disabled build keeps terminal mode available.

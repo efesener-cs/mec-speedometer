@@ -1,0 +1,4 @@
+/mec-speedometer
+*.test
+coverage.out
+.DS_Store

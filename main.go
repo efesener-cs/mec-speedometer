@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const defaultModule = "MirrorsEdgeCatalyst.exe"
+const defaultModule = "MirrorsEdgeCata.exe"
 
 func main() {
 	processName := flag.String("process", defaultModule, "game executable name to find under /proc")
