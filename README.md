@@ -30,7 +30,7 @@ Build the binary at a stable path, then open the game's **Properties → General
 
 Replace the path with the absolute path to this executable. Steam's `%command%` is started as a child process; the speedometer follows the matching game process, displays the overlay, and exits when the game exits. To use the terminal instead, add `--terminal` before `--`.
 
-The overlay requires CGO, GTK 3 development files, and an X11 session (or X11 backend for the game/desktop). Under a native Wayland session where GTK is using Wayland, the application falls back to terminal output; set `GDK_BACKEND=x11` in the launch environment if XWayland is available.
+The overlay requires CGO, GTK 3 development files, and X11/XWayland access. GTK is explicitly pinned to its X11 backend so it can follow and overlay the XWayland game window even in a Wayland desktop session. The speed window is click-through and does not take keyboard focus. If XWayland or its display authorization is unavailable, the app falls back to terminal output.
 
 ## Linux permissions
 

@@ -33,8 +33,8 @@ static gboolean draw_background(GtkWidget *widget, cairo_t *cr, gpointer data) {
 	return FALSE;
 }
 
-static int find_window_for_pid(Display *d, Window w, Atom pid_atom, pid_t pid,
-		int *x, int *y, int *width, int *height) {
+static void find_window_for_pid(Display *d, Window w, Atom pid_atom, pid_t pid,
+		int *best_area, int *best_x, int *best_y, int *best_width, int *best_height) {
 	Atom actual;
 	int format;
 	unsigned long nitems, after;
@@ -46,28 +46,39 @@ static int find_window_for_pid(Display *d, Window w, Atom pid_atom, pid_t pid,
 		XWindowAttributes a;
 	int rx, ry;
 	Window child;
-		if (XGetWindowAttributes(d, w, &a) && a.map_state == IsViewable &&
+		if (XGetWindowAttributes(d, w, &a) && a.map_state == IsViewable && a.width >= 160 && a.height >= 90 &&
 			XTranslateCoordinates(d, w, DefaultRootWindow(d), 0, 0, &rx, &ry, &child)) {
-			*x = rx; *y = ry; *width = a.width; *height = a.height;
-			return 1;
+			int area = a.width * a.height;
+			if (area > *best_area) {
+				*best_area = area;
+				*best_x = rx; *best_y = ry; *best_width = a.width; *best_height = a.height;
+			}
 		}
 	} else if (data != NULL) {
 		XFree(data);
 	}
 	Window root, parent, *children = NULL;
 	unsigned int count = 0;
-	if (!XQueryTree(d, w, &root, &parent, &children, &count)) return 0;
+	if (!XQueryTree(d, w, &root, &parent, &children, &count)) return;
 	for (unsigned int i = 0; i < count; i++) {
-		if (find_window_for_pid(d, children[i], pid_atom, pid, x, y, width, height)) {
-			XFree(children);
-			return 1;
-		}
+		find_window_for_pid(d, children[i], pid_atom, pid, best_area, best_x, best_y, best_width, best_height);
 	}
 	if (children) XFree(children);
-	return 0;
+}
+
+static int window_geometry(Display *d, Window w, int *x, int *y, int *width, int *height) {
+	XWindowAttributes a;
+	int rx, ry;
+	Window child;
+	if (!XGetWindowAttributes(d, w, &a) || a.map_state != IsViewable || a.width < 160 || a.height < 90) return 0;
+	if (!XTranslateCoordinates(d, w, DefaultRootWindow(d), 0, 0, &rx, &ry, &child)) return 0;
+	*x = rx; *y = ry; *width = a.width; *height = a.height;
+	return 1;
 }
 
 static void *mec_overlay_new(void) {
+	// Prefer XWayland when both the Wayland and X11 backends are available.
+	gdk_set_allowed_backends("x11");
 	if (!gtk_init_check(NULL, NULL)) return NULL;
 	GdkDisplay *gdk = gdk_display_get_default();
 	if (!gdk || !GDK_IS_X11_DISPLAY(gdk)) return NULL;
@@ -83,6 +94,7 @@ static void *mec_overlay_new(void) {
 	gtk_window_set_skip_pager_hint(GTK_WINDOW(o->window), TRUE);
 	gtk_window_set_accept_focus(GTK_WINDOW(o->window), FALSE);
 	gtk_window_set_focus_on_map(GTK_WINDOW(o->window), FALSE);
+	gtk_window_set_position(GTK_WINDOW(o->window), GTK_WIN_POS_CENTER);
 	gtk_widget_set_app_paintable(o->window, TRUE);
 	gtk_widget_set_size_request(o->window, 280, 82);
 	g_signal_connect(o->window, "draw", G_CALLBACK(draw_background), NULL);
@@ -102,6 +114,9 @@ static void *mec_overlay_new(void) {
 	gtk_container_add(GTK_CONTAINER(box), o->label);
 	o->display = GDK_DISPLAY_XDISPLAY(gdk);
 	gtk_widget_show_all(o->window);
+	cairo_region_t *click_through = cairo_region_create();
+	gtk_widget_input_shape_combine_region(o->window, click_through);
+	cairo_region_destroy(click_through);
 	return o;
 }
 
@@ -111,11 +126,35 @@ static void mec_overlay_update(void *handle, int pid, const char *text) {
 	gtk_label_set_text(GTK_LABEL(o->label), text);
 	if (pid > 0) {
 		int x, y, w, h;
-		Atom pid_atom = XInternAtom(o->display, "_NET_WM_PID", True);
-		if (pid_atom != None && find_window_for_pid(o->display, DefaultRootWindow(o->display), pid_atom, pid, &x, &y, &w, &h)) {
+		Atom pid_atom = XInternAtom(o->display, "_NET_WM_PID", False);
+		int best_area = 0;
+		if (pid_atom != None) {
+			find_window_for_pid(o->display, DefaultRootWindow(o->display), pid_atom, pid,
+				&best_area, &x, &y, &w, &h);
+		}
+		if (best_area > 0) {
 			gtk_window_move(GTK_WINDOW(o->window), x + (w - 280) / 2, y + h / 10);
+		} else {
+			// Proton/game-scope may publish the wrapper PID; follow the active game window.
+			Atom active_atom = XInternAtom(o->display, "_NET_ACTIVE_WINDOW", True);
+			Atom actual;
+			int format;
+			unsigned long count, after;
+			unsigned char *data = NULL;
+			if (active_atom != None && XGetWindowProperty(o->display, DefaultRootWindow(o->display),
+				active_atom, 0, 1, False, XA_WINDOW, &actual, &format, &count, &after, &data) == Success &&
+				data != NULL && count == 1) {
+				Window active = *(Window *)data;
+				if (window_geometry(o->display, active, &x, &y, &w, &h)) {
+					gtk_window_move(GTK_WINDOW(o->window), x + (w - 280) / 2, y + h / 10);
+				}
+			}
+			if (data) XFree(data);
 		}
 	}
+	GdkWindow *gdk_window = gtk_widget_get_window(o->window);
+	if (gdk_window) XRaiseWindow(o->display, GDK_WINDOW_XID(gdk_window));
+	XFlush(o->display);
 	while (gtk_events_pending()) gtk_main_iteration();
 }
 
