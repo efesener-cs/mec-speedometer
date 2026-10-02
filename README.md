@@ -1,3 +1,5 @@
+# this project made with ai slop
+
 # MEC Speedometer for Linux
 
 A read-only Go implementation of the original Mirror's Edge Catalyst speedometer's memory-reading method. It displays Faith's horizontal speed in a small, transparent, always-on-top X11 window and can wrap the Steam game command. It never writes game memory.
